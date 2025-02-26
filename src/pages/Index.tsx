@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Moon, Sun, Upload, Copy, QrCode, X } from "lucide-react";
+import { Moon, Sun, Upload, Copy, QrCode, X, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { generateRoomCode } from "@/lib/utils";
 import QRCode from "qrcode";
@@ -8,21 +8,137 @@ interface FileWithPreview extends File {
   preview?: string;
 }
 
+interface Peer {
+  id: string;
+  lastSeen: number;
+}
+
 const Index = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [roomCode, setRoomCode] = useState("");
   const [inputRoomCode, setInputRoomCode] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<FileWithPreview[]>([]);
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
+  const [peers, setPeers] = useState<Peer[]>([]);
+  const [peerId, setPeerId] = useState<string>("");
   const { toast } = useToast();
 
   useEffect(() => {
+    setPeerId(Math.random().toString(36).substr(2, 9));
+
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     if (roomParam) {
       joinRoom(roomParam);
     }
   }, []);
+
+  useEffect(() => {
+    if (roomCode) {
+      const channel = new BroadcastChannel(`room-${roomCode}`);
+      
+      channel.postMessage({ type: 'presence', peerId, timestamp: Date.now() });
+
+      channel.onmessage = (event) => {
+        const { type, peerId: remotePeerId, timestamp, files } = event.data;
+        
+        if (type === 'presence') {
+          setPeers(current => {
+            const updated = [...current];
+            const existingPeerIndex = updated.findIndex(p => p.id === remotePeerId);
+            
+            if (existingPeerIndex >= 0) {
+              updated[existingPeerIndex].lastSeen = timestamp;
+            } else {
+              updated.push({ id: remotePeerId, lastSeen: timestamp });
+              toast({
+                title: "New user joined",
+                description: "Someone joined the room",
+              });
+            }
+            
+            return updated;
+          });
+
+          channel.postMessage({ type: 'presence', peerId, timestamp: Date.now() });
+        } else if (type === 'files') {
+          handleReceivedFiles(files);
+        }
+      };
+
+      const interval = setInterval(() => {
+        channel.postMessage({ type: 'presence', peerId, timestamp: Date.now() });
+        
+        setPeers(current => 
+          current.filter(peer => Date.now() - peer.lastSeen < 10000)
+        );
+      }, 5000);
+
+      return () => {
+        clearInterval(interval);
+        channel.close();
+      };
+    }
+  }, [roomCode, peerId]);
+
+  const handleReceivedFiles = (files: FileWithPreview[]) => {
+    const newFiles = files.map(file => {
+      if (file.preview) {
+        const blob = dataURLtoBlob(file.preview);
+        return {
+          ...file,
+          preview: URL.createObjectURL(blob)
+        };
+      }
+      return file;
+    });
+    
+    setSelectedFiles(prev => [...prev, ...newFiles]);
+    toast({
+      title: "Files received",
+      description: `${files.length} new file(s) shared to the room`,
+    });
+  };
+
+  const dataURLtoBlob = (dataurl: string) => {
+    const arr = dataurl.split(',');
+    const mime = arr[0].match(/:(.*?);/)![1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
+  };
+
+  const handleFileSelection = (files: FileWithPreview[]) => {
+    const newFiles = files.map(file => {
+      if (file.type.startsWith('image/')) {
+        file.preview = URL.createObjectURL(file);
+      }
+      return file;
+    });
+    
+    setSelectedFiles(prev => [...prev, ...newFiles]);
+    
+    if (roomCode) {
+      const channel = new BroadcastChannel(`room-${roomCode}`);
+      channel.postMessage({ 
+        type: 'files',
+        files: newFiles.map(file => ({
+          ...file,
+          preview: file.preview
+        }))
+      });
+      channel.close();
+    }
+
+    toast({
+      title: "Files selected",
+      description: `${files.length} file(s) ready to share`,
+    });
+  };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -40,21 +156,6 @@ const Index = () => {
     } catch (err) {
       console.error("Error generating QR code:", err);
     }
-  };
-
-  const handleFileSelection = (files: FileWithPreview[]) => {
-    const newFiles = files.map(file => {
-      if (file.type.startsWith('image/')) {
-        file.preview = URL.createObjectURL(file);
-      }
-      return file;
-    });
-    
-    setSelectedFiles(prev => [...prev, ...newFiles]);
-    toast({
-      title: "Files selected",
-      description: `${files.length} file(s) ready to share`,
-    });
   };
 
   const handleDrop = async (e: React.DragEvent) => {
@@ -125,7 +226,15 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background text-foreground transition-colors duration-300">
       <div className="container px-4 py-8 mx-auto max-w-7xl">
-        <div className="flex justify-end mb-8">
+        <div className="flex justify-between mb-8">
+          <div className="flex items-center gap-2">
+            {roomCode && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Users className="h-4 w-4" />
+                <span>{peers.length + 1} users in room</span>
+              </div>
+            )}
+          </div>
           <button 
             className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
             onClick={() => document.documentElement.classList.toggle("dark")}
