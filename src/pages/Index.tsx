@@ -1,5 +1,4 @@
-
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Moon, Sun, Upload, Copy, QrCode, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { generateRoomCode } from "@/lib/utils";
@@ -12,10 +11,19 @@ interface FileWithPreview extends File {
 const Index = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [roomCode, setRoomCode] = useState("");
+  const [inputRoomCode, setInputRoomCode] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<FileWithPreview[]>([]);
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
   const { toast } = useToast();
-  
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const roomParam = params.get('room');
+    if (roomParam) {
+      joinRoom(roomParam);
+    }
+  }, []);
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
@@ -88,9 +96,29 @@ const Index = () => {
     const code = generateRoomCode();
     setRoomCode(code);
     generateQRCode(code);
+    window.history.pushState({}, '', `?room=${code}`);
     toast({
       title: "Room created!",
       description: `Your room code is: ${code}`,
+    });
+  };
+
+  const joinRoom = (code: string) => {
+    if (code.length === 0) {
+      toast({
+        title: "Error",
+        description: "Please enter a room code",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setRoomCode(code);
+    generateQRCode(code);
+    window.history.pushState({}, '', `?room=${code}`);
+    toast({
+      title: "Room joined!",
+      description: `You've joined room: ${code}`,
     });
   };
 
@@ -142,11 +170,21 @@ const Index = () => {
 
               <div className="glass glass-dark p-6">
                 <h2 className="text-xl font-semibold mb-4">Join a Room</h2>
-                <input
-                  type="text"
-                  placeholder="Enter room code"
-                  className="w-full p-2 bg-background border rounded-md"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Enter room code"
+                    value={inputRoomCode}
+                    onChange={(e) => setInputRoomCode(e.target.value.toUpperCase())}
+                    className="flex-1 p-2 bg-background border rounded-md"
+                  />
+                  <button
+                    onClick={() => joinRoom(inputRoomCode)}
+                    className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity"
+                  >
+                    Join
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
